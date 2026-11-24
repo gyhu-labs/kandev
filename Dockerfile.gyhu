@@ -1,0 +1,51 @@
+# gyhu-labs build of the Kandev server image (fork-only file).
+#
+# Starts from the upstream release image of the base tag, pinned by digest,
+# and replaces only the Go binaries this fork changes. Everything else
+# (Debian packages, Node, gh, entrypoint, users, ENV, CMD) stays upstream's.
+#
+# Upstream layout (verified on ghcr.io/kdlbs/kandev:0.103.1, linux/amd64):
+#   /app/apps/backend/bin/kandev                  backend, owner 1000:999, 0755
+#   /app/apps/backend/bin/agentctl-linux-amd64    uploaded into k8s/SSH sandboxes
+#   /app/apps/backend/bin/agentctl-linux-arm64    uploaded into k8s/SSH sandboxes
+#   /app/apps/backend/bin/agentctl-darwin-*       untouched (not used on Linux hosts)
+#   /usr/local/bin/agentctl                       native agentctl, owner 0:0, 0755
+# The image has no remote-helpers.json, so the k8s executor resolves
+# agentctl-linux-<arch> next to the kandev binary.
+#
+# The build context must contain the Vite bundle in
+# apps/backend/internal/webapp/embedded/generated (the workflow builds it).
+
+ARG UPSTREAM_IMAGE=ghcr.io/kdlbs/kandev:0.103.1@sha256:7e11b8e15030e18d6ec8327e8015ef8bd241d3c41d14205a0b031a46faa2e2c3
+ARG GO_IMAGE=golang:1.26.8-bookworm@sha256:dc9ad6c05acc7a88e5b71bde60a5fe3bd4b9f0db209011711b464107438a8107
+
+FROM ${GO_IMAGE} AS build
+WORKDIR /src
+COPY apps/backend/go.mod apps/backend/go.sum apps/backend/
+COPY pluginsdk pluginsdk
+RUN cd apps/backend && go mod download
+COPY apps/backend apps/backend
+RUN test -f apps/backend/internal/webapp/embedded/generated/index.html
+ARG KANDEV_VERSION
+ARG KANDEV_COMMIT
+ARG KANDEV_BUILD_TIME
+# Same flags as upstream's release bundle: CGO + fts5 for the backend
+# (glibc of bookworm matches the runtime base), static agentctl helpers.
+RUN set -eu; cd apps/backend; \
+    LDFLAGS="-s -w -X main.Version=${KANDEV_VERSION} -X main.Commit=${KANDEV_COMMIT} -X main.BuildTime=${KANDEV_BUILD_TIME}"; \
+    mkdir -p /out; \
+    CGO_ENABLED=1 go build -trimpath -buildvcs=false -tags fts5 -ldflags "$LDFLAGS" -o /out/kandev ./cmd/kandev; \
+    CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o /out/agentctl ./cmd/agentctl; \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o /out/agentctl-linux-amd64 ./cmd/agentctl; \
+    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o /out/agentctl-linux-arm64 ./cmd/agentctl; \
+    /out/agentctl tcp-stdio --port 0 2>&1 | grep -q 'port must be between' ; \
+    ls -l /out
+
+FROM ${UPSTREAM_IMAGE}
+COPY --from=build --chown=1000:999 --chmod=0755 /out/kandev               /app/apps/backend/bin/kandev
+COPY --from=build --chown=1000:999 --chmod=0755 /out/agentctl-linux-amd64 /app/apps/backend/bin/agentctl-linux-amd64
+COPY --from=build --chown=1000:999 --chmod=0755 /out/agentctl-linux-arm64 /app/apps/backend/bin/agentctl-linux-arm64
+COPY --from=build --chown=0:0 --chmod=0755       /out/agentctl              /usr/local/bin/agentctl
+LABEL org.opencontainers.image.source="https://github.com/gyhu-labs/kandev" \
+      org.opencontainers.image.description="Kandev with the Kubernetes exec stream transport (gyhu-labs fork)" \
+      org.opencontainers.image.licenses="AGPL-3.0"
