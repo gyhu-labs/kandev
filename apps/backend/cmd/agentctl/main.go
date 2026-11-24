@@ -66,6 +66,12 @@ func runMain() int {
 		return runSSHReconcile(context.Background(), os.Stdin, os.Stdout)
 	}
 
+	// The Kubernetes exec transport runs one stdio bridge per forwarded
+	// connection; it dials only Pod loopback and never starts the server.
+	if len(os.Args) > 1 && os.Args[1] == tcpStdioSubcommand {
+		return runTCPStdio(os.Args[2:], os.Stdin, os.Stdout, os.Stderr)
+	}
+
 	// Dispatch kandev CLI subcommands before flag parsing or server startup.
 	// When invoked as "agentctl kandev <cmd>", this runs the CLI and exits
 	// without starting the HTTP server.
