@@ -28,8 +28,11 @@ type PodExecutor interface {
 }
 
 type PortForwardRequest struct {
-	Namespace    string
-	Pod          string
+	Namespace string
+	Pod       string
+	// Container names the container that runs the agentctl bridge for the
+	// exec transport. The port-forward transport ignores it.
+	Container    string
 	LocalAddress string
 	LocalPort    uint16
 	RemotePort   uint16
@@ -107,6 +110,9 @@ func validateForwardRequest(forwarder PortForwarder, request *PortForwardRequest
 	}
 	if len(validation.IsDNS1123Subdomain(request.Pod)) > 0 {
 		return fieldError("port_forward.pod", "must be a valid Pod name")
+	}
+	if request.Container != "" && len(validation.IsDNS1123Label(request.Container)) > 0 {
+		return fieldError("port_forward.container", "must be a valid container name")
 	}
 	if request.LocalAddress == "" {
 		request.LocalAddress = loopbackAddress

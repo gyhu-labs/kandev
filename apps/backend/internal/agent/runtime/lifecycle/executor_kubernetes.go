@@ -618,8 +618,8 @@ func startKubernetesForward(
 	remotePort uint16,
 ) (kubeexecutor.PortForwardSession, error) {
 	forward, err := streams.Forward(context.WithoutCancel(ctx), kubeexecutor.PortForwardRequest{
-		Namespace: pod.Namespace, Pod: pod.Name, LocalAddress: kubernetesControlHost,
-		LocalPort: 0, RemotePort: remotePort,
+		Namespace: pod.Namespace, Pod: pod.Name, Container: kubernetesBootstrapContainer(pod),
+		LocalAddress: kubernetesControlHost, LocalPort: 0, RemotePort: remotePort,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("kubernetes lifecycle: forward port %d: %w", remotePort, err)
@@ -641,6 +641,22 @@ func startKubernetesForward(
 		_ = forward.Close()
 		return nil, ctx.Err()
 	}
+}
+
+// kubernetesBootstrapContainer returns the container that runs the Kandev
+// bootstrap and therefore holds the uploaded agentctl. Admission validation
+// keeps that container's command unmodified, so the match is exact.
+func kubernetesBootstrapContainer(pod *corev1.Pod) string {
+	if pod == nil {
+		return ""
+	}
+	for _, container := range pod.Spec.Containers {
+		if len(container.Args) == 1 &&
+			strings.HasSuffix(strings.TrimSpace(container.Args[0]), "exec "+kubernetesAgentctlPath) {
+			return container.Name
+		}
+	}
+	return ""
 }
 
 func kubernetesProfileConfigFromMetadata(metadata map[string]interface{}) (kubeexecutor.ProfileConfig, error) {
@@ -678,6 +694,7 @@ func kubernetesExecutorConfigFromMetadata(metadata map[string]interface{}) (kube
 		MetadataKeyKubernetesKubeContext:           getMetadataString(metadata, MetadataKeyKubernetesKubeContext),
 		MetadataKeyKubernetesConfigNamespace:       getMetadataString(metadata, MetadataKeyKubernetesConfigNamespace),
 		MetadataKeyKubernetesRequestTimeoutSeconds: getMetadataString(metadata, MetadataKeyKubernetesRequestTimeoutSeconds),
+		MetadataKeyKubernetesTransport:             getMetadataString(metadata, MetadataKeyKubernetesTransport),
 	}
 	return kubeexecutor.ParseExecutorConfig(values)
 }

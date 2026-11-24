@@ -56,14 +56,27 @@ func newKubernetesRuntimeClient(config kubeexecutor.ExecutorConfig) (*kubernetes
 		return nil, fmt.Errorf("kubernetes lifecycle: create timeout-free watch client: %w", err)
 	}
 	resources := &liveKubernetesResources{client: client, watchClient: watchClient}
+	executor := &liveKubernetesExecutor{config: streamingConfig, resources: resources}
 	streams := kubeexecutor.NewStreamOperations(
-		&liveKubernetesExecutor{config: streamingConfig, resources: resources},
-		&liveKubernetesForwarder{
+		executor, newKubernetesForwarder(config, executor, &liveKubernetesForwarder{
 			config: streamingConfig, resources: resources,
 			handshakeTimeout: kubernetesPortForwardHandshakeTimeout(config.RequestTimeoutSeconds),
-		},
+		}),
 	)
 	return &kubernetesRuntimeClient{resources: resources, streams: streams}, nil
+}
+
+// newKubernetesForwarder selects the executor's stream transport. The exec
+// transport runs the uploaded agentctl as the in-Pod bridge.
+func newKubernetesForwarder(
+	config kubeexecutor.ExecutorConfig,
+	executor kubeexecutor.PodExecutor,
+	portForwarder kubeexecutor.PortForwarder,
+) kubeexecutor.PortForwarder {
+	if config.EffectiveTransport() == kubeexecutor.StreamTransportExec {
+		return &kubeexecutor.ExecPortForwarder{Executor: executor, BridgePath: kubernetesAgentctlPath}
+	}
+	return portForwarder
 }
 
 func kubernetesStreamingRESTConfig(apiConfig *rest.Config) *rest.Config {
