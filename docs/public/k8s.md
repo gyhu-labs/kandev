@@ -183,7 +183,11 @@ The backend reaches agentctl through a process-local `127.0.0.1` listener in eve
 - `port_forward` (default, also used when the field is absent) opens `pods/portforward`.
 - `exec` carries each connection over its own `pods/exec` stream into `/opt/kandev/agentctl tcp-stdio --port <port>`, which dials only `127.0.0.1` inside the Pod. Use it for runtimes without CRI port-forward support, such as Kata Containers and gVisor. It needs only the `pods/exec` permissions, and each new connection costs one exec round trip.
 
-Set it with the executor API, for example `"transport": "exec"` in the executor `config`. The settings form does not show the field yet, so saving the connection from the UI resets it to the default; re-apply it through the API after such an edit. With `exec`, **Test Kubernetes** checks only exec permissions and proves the data path by sending random bytes through an exec stream and comparing the echo, instead of the handshake-only port-forward check.
+Set it with the executor API, for example `"transport": "exec"` in the executor `config`. The settings form does not show the field yet, so saving the connection from the UI resets it to the default; re-apply it through the API after such an edit. With `exec`, **Test Kubernetes** checks only exec permissions and proves the data path by sending random bytes through an exec stream and comparing the echo, instead of the handshake-only port-forward check. The backend logs each exec connection open and close at debug level, and logs a warning with the bridge's redacted stderr tail when a stream fails while its session is still open.
+
+### Agent conversation state on the workspace volume
+
+With `managed_pvc` or `existing_claim`, Kandev keeps each session's native conversation history on the workspace volume, so a Pod that Resume recreates can reload the conversation. After the prepare script, it links `~/.claude/projects` in the session HOME to `/workspace/.kandev/agent-state/<session hash>/.claude/projects` (mode 0700) and adds `/.kandev/` to the checkout's `.git/info/exclude`, which also keeps the delivery journal out of `git status` and turn changes. HOME itself, `auth.env` and credential files such as `~/.claude/.credentials.json` stay on the `/run/kandev` volume and are never written to the PVC. An `emptyDir` workspace is unchanged. The history grows with each session until the task is archived, which deletes the PVC.
 
 ### Create and test a profile
 
