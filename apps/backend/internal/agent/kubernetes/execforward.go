@@ -3,12 +3,17 @@ package kubernetes
 import (
 	"context"
 	"errors"
-	"io"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
+	"unicode/utf8"
 
+	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/util/validation"
+
+	"github.com/kandev/kandev/internal/common/securityutil"
 )
 
 // TCPStdioSubcommand is the agentctl subcommand that bridges its stdin and
@@ -23,7 +28,16 @@ const TCPStdioSubcommand = "tcp-stdio"
 type ExecPortForwarder struct {
 	Executor   PodExecutor
 	BridgePath string
+	// Logger receives one debug line per connection open and close, and a
+	// warning when an exec stream fails while the session is still open. Nil
+	// disables logging.
+	Logger *zap.Logger
 }
+
+// execBridgeStderrLimit bounds how much bridge stderr is kept for the
+// failure warning. Only the tail is kept; it is credential-redacted before
+// it is logged.
+const execBridgeStderrLimit = 2 << 10
 
 // Forward starts a loopback listener for the request. The returned session is
 // ready as soon as the listener is bound; each connection opens its exec
@@ -74,11 +88,77 @@ func (f *ExecPortForwarder) bridge(ctx context.Context, request PortForwardReque
 	connCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer func() { _ = conn.Close() }()
-	_ = f.Executor.Exec(connCtx, ExecRequest{
+	log := f.connectionLogger(request, conn)
+	log.Debug("exec transport connection opened")
+	started := time.Now()
+	stderr := &boundedTail{limit: execBridgeStderrLimit}
+	err := f.Executor.Exec(connCtx, ExecRequest{
 		Namespace: request.Namespace, Pod: request.Pod, Container: request.Container,
 		Command: ExecBridgeCommand(f.BridgePath, request.RemotePort),
-		Stdin:   conn, Stdout: conn, Stderr: io.Discard,
+		Stdin:   conn, Stdout: conn, Stderr: stderr,
 	})
+	elapsed := time.Since(started)
+	// A cancelled session context means Close or the parent ended the
+	// stream on purpose; only failures of a live session are warnings.
+	if err != nil && ctx.Err() == nil {
+		log.Warn("exec transport stream failed",
+			zap.Duration("duration", elapsed),
+			zap.String("stderr", stderr.redacted()),
+			zap.String("error", securityutil.SanitizeCredentials(err.Error())))
+	}
+	log.Debug("exec transport connection closed",
+		zap.Duration("duration", elapsed), zap.Bool("stream_error", err != nil))
+}
+
+func (f *ExecPortForwarder) connectionLogger(request PortForwardRequest, conn net.Conn) *zap.Logger {
+	if f.Logger == nil {
+		return zap.NewNop()
+	}
+	peer := ""
+	if address := conn.RemoteAddr(); address != nil {
+		peer = address.String()
+	}
+	return f.Logger.With(
+		zap.String("namespace", request.Namespace), zap.String("pod", request.Pod),
+		zap.String("container", request.Container), zap.Uint16("remote_port", request.RemotePort),
+		zap.String("local_peer", peer),
+	)
+}
+
+// boundedTail keeps the last limit bytes written to it. Exec streams write
+// stderr from their own goroutine, so it is safe for concurrent use.
+type boundedTail struct {
+	mu    sync.Mutex
+	limit int
+	data  []byte
+	cut   bool
+}
+
+func (b *boundedTail) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.data = append(b.data, p...)
+	if extra := len(b.data) - b.limit; extra > 0 {
+		b.data = append(b.data[:0], b.data[extra:]...)
+		b.cut = true
+	}
+	return len(p), nil
+}
+
+// redacted returns the kept tail as valid UTF-8 with credentials redacted.
+func (b *boundedTail) redacted() string {
+	b.mu.Lock()
+	data := append([]byte(nil), b.data...)
+	cut := b.cut
+	b.mu.Unlock()
+	for len(data) > 0 && !utf8.RuneStart(data[0]) {
+		data = data[1:]
+	}
+	text := strings.TrimSpace(strings.ToValidUTF8(string(data), ""))
+	if cut && text != "" {
+		text = "…" + text
+	}
+	return securityutil.SanitizeCredentials(text)
 }
 
 // ExecBridgeCommand returns the in-Pod command that bridges stdio to the

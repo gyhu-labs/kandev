@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 
 	kubeexecutor "github.com/kandev/kandev/internal/agent/kubernetes"
@@ -71,7 +72,7 @@ func TestKubernetesCreateInstanceReachesAgentctlOverExecTransport(t *testing.T) 
 		return &kubernetesRuntimeClient{
 			resources: resources,
 			streams: kubeexecutor.NewStreamOperations(
-				execs, newKubernetesForwarder(config, execs, portForwards),
+				execs, newKubernetesForwarder(config, execs, portForwards, nil),
 			),
 		}, nil
 	}
@@ -104,15 +105,16 @@ func TestKubernetesCreateInstanceReachesAgentctlOverExecTransport(t *testing.T) 
 
 func TestNewKubernetesForwarderDefaultsToPortForward(t *testing.T) {
 	portForwarder := &recordingKubernetesForwarder{}
-	selected := newKubernetesForwarder(kubeexecutor.ExecutorConfig{}, &recordingKubernetesExec{}, portForwarder)
+	selected := newKubernetesForwarder(kubeexecutor.ExecutorConfig{}, &recordingKubernetesExec{}, portForwarder, nil)
 	require.Same(t, portForwarder, selected)
 
 	selected = newKubernetesForwarder(
-		kubeexecutor.ExecutorConfig{Transport: kubeexecutor.StreamTransportExec}, &recordingKubernetesExec{}, portForwarder,
+		kubeexecutor.ExecutorConfig{Transport: kubeexecutor.StreamTransportExec}, &recordingKubernetesExec{}, portForwarder, zap.NewNop(),
 	)
 	execForwarder, ok := selected.(*kubeexecutor.ExecPortForwarder)
 	require.True(t, ok)
 	require.Equal(t, kubernetesAgentctlPath, execForwarder.BridgePath)
+	require.NotNil(t, execForwarder.Logger, "the exec transport logs through the executor logger")
 }
 
 func TestKubernetesBootstrapContainerFindsAgentctlContainer(t *testing.T) {

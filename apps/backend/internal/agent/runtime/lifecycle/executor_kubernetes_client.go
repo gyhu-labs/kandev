@@ -23,8 +23,11 @@ import (
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/tools/remotecommand"
 
+	"go.uber.org/zap"
+
 	kubeexecutor "github.com/kandev/kandev/internal/agent/kubernetes"
 	"github.com/kandev/kandev/internal/agent/runtime/routingerr"
+	"github.com/kandev/kandev/internal/common/logger"
 )
 
 type kubernetesResourceClient interface {
@@ -45,7 +48,19 @@ type kubernetesRuntimeClient struct {
 type kubernetesRuntimeClientFactory func(kubeexecutor.ExecutorConfig) (*kubernetesRuntimeClient, error)
 type kubernetesAgentctlBinaryResolver func(context.Context, *ExecutorCreateRequest, kubeexecutor.Platform) ([]byte, error)
 
-func newKubernetesRuntimeClient(config kubeexecutor.ExecutorConfig) (*kubernetesRuntimeClient, error) {
+// newKubernetesRuntimeClientFactory binds the executor's logger to the live
+// client so the exec transport can report its connections.
+func newKubernetesRuntimeClientFactory(log *logger.Logger) kubernetesRuntimeClientFactory {
+	var transportLogger *zap.Logger
+	if log != nil {
+		transportLogger = log.Zap()
+	}
+	return func(config kubeexecutor.ExecutorConfig) (*kubernetesRuntimeClient, error) {
+		return newKubernetesRuntimeClient(config, transportLogger)
+	}
+}
+
+func newKubernetesRuntimeClient(config kubeexecutor.ExecutorConfig, transportLogger *zap.Logger) (*kubernetesRuntimeClient, error) {
 	client, err := kubeexecutor.NewClient(config, kubeexecutor.ConfigLoader{}, nil)
 	if err != nil {
 		return nil, err
@@ -61,7 +76,7 @@ func newKubernetesRuntimeClient(config kubeexecutor.ExecutorConfig) (*kubernetes
 		executor, newKubernetesForwarder(config, executor, &liveKubernetesForwarder{
 			config: streamingConfig, resources: resources,
 			handshakeTimeout: kubernetesPortForwardHandshakeTimeout(config.RequestTimeoutSeconds),
-		}),
+		}, transportLogger),
 	)
 	return &kubernetesRuntimeClient{resources: resources, streams: streams}, nil
 }
@@ -72,9 +87,12 @@ func newKubernetesForwarder(
 	config kubeexecutor.ExecutorConfig,
 	executor kubeexecutor.PodExecutor,
 	portForwarder kubeexecutor.PortForwarder,
+	transportLogger *zap.Logger,
 ) kubeexecutor.PortForwarder {
 	if config.EffectiveTransport() == kubeexecutor.StreamTransportExec {
-		return &kubeexecutor.ExecPortForwarder{Executor: executor, BridgePath: kubernetesAgentctlPath}
+		return &kubeexecutor.ExecPortForwarder{
+			Executor: executor, BridgePath: kubernetesAgentctlPath, Logger: transportLogger,
+		}
 	}
 	return portForwarder
 }
