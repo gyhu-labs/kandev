@@ -111,7 +111,13 @@ const turnChangePersistenceTimeout = 3 * time.Second
 const turnChangeExportPageCeiling = 15 * time.Second
 const turnChangeReconcilePageSize = 100
 const turnChangeReconcilePages = 10
-const turnChangeAdmissionTimeout = 10 * time.Second
+
+// turnChangeAdmissionTimeout bounds the whole synchronous start admission.
+// The start capture gets this minus turnChangeStartPersistenceReserve, which
+// must cover agentctl's own start-checkpoint limit (10 s). With the former
+// 10 s budget the capture had only 4 s, and git on a Kata guest's virtio-fs
+// workspace overran it, leaving every class M turn capture_failed.
+const turnChangeAdmissionTimeout = 16 * time.Second
 const turnChangeCleanupTimeout = 5 * time.Second
 
 func turnChangePersistenceContext() (context.Context, context.CancelFunc) {
