@@ -76,6 +76,7 @@ func (r *KubernetesExecutor) bootstrapPod(
 	if err := runKubernetesPrepareScript(ctx, runtime.streams, pod, profile.MainContainer); err != nil {
 		return err
 	}
+	r.linkKubernetesAgentState(ctx, runtime.streams, req, pod, profile.MainContainer, string(profile.Workspace.Mode))
 	if getMetadataBool(req.Metadata, metadataKubernetesTaskOwned) {
 		controlEnv, err := kubernetesSerializeEnvironment(kubernetesAuthEnvironment(nil, nonce))
 		if err != nil {

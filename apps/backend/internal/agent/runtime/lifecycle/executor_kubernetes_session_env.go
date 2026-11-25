@@ -91,5 +91,11 @@ func (r *KubernetesExecutor) prepareSharedKubernetesCredentials(ctx context.Cont
 		return err
 	}
 	uploader := kubernetesPodFileUploader{streams: runtime.streams, pod: pod, container: container}
-	return r.materializeKubernetesCredentials(ctx, uploader, runtime, req, pod, container)
+	if err := r.materializeKubernetesCredentials(ctx, uploader, runtime, req, pod, container); err != nil {
+		return err
+	}
+	// Shared Pods are already bootstrapped, so the checkout exists and a new
+	// or reattached session can link its state onto the workspace volume.
+	r.linkKubernetesAgentState(ctx, runtime.streams, req, pod, container, kubernetesRequestWorkspaceMode(req))
+	return nil
 }

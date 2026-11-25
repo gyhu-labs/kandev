@@ -185,7 +185,8 @@ func TestKubernetesCreateInstanceProvisionsBootstrapsAndForwardsAgentctl(t *test
 	require.NotNil(t, instance.Client)
 	require.Len(t, resources.createdPVCs, 1)
 	require.Len(t, resources.createdPods, 1)
-	require.Len(t, execs.requests, 5, "binary, runtime config, auth config, prepare, then start signal")
+	require.Len(t, execs.requests, 6, "binary, runtime config, auth config, prepare, agent state link, then start signal")
+	require.Len(t, agentStateExecs(execs), 1, "a managed PVC workspace keeps agent conversation state on the volume")
 	require.Equal(t, []uint16{uint16(kubeexecutor.DefaultAgentctlPort), 41001}, forwards.remotePorts())
 	for _, request := range forwards.requests {
 		require.Equal(t, "127.0.0.1", request.LocalAddress)
@@ -487,7 +488,10 @@ func TestKubernetesCreateInstanceRebuildsLostPodAgainstVerifiedManagedPVC(t *tes
 	require.Equal(t, "pvc-uid", reconnected.Metadata[MetadataKeyKubernetesPVCUID])
 	require.Len(t, resources.createdPVCs, 1, "resume must reuse the recorded PVC")
 	require.Len(t, resources.createdPods, 2)
-	require.Len(t, reconnectExecs.requests, 5, "replacement Pod needs full bootstrap materialization")
+	require.Len(t, reconnectExecs.requests, 6, "replacement Pod needs full bootstrap materialization")
+	stateLinks := agentStateExecs(reconnectExecs)
+	require.Len(t, stateLinks, 1, "the replacement Pod relinks the session's state on the retained PVC")
+	require.Contains(t, strings.Join(stateLinks[0].request.Command, " "), kubernetesAgentStateDir(reconnectRequest))
 }
 
 func TestKubernetesStopInstancePreservesOrdinaryStopAndForceCleansManagedResources(t *testing.T) {
