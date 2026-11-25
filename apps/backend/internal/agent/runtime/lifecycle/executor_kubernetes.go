@@ -88,7 +88,7 @@ func NewKubernetesExecutor(agentctlResolver *AgentctlResolver, log *logger.Logge
 	runtime := &KubernetesExecutor{
 		agentctlResolver:  agentctlResolver,
 		logger:            log,
-		clientFactory:     newKubernetesRuntimeClient,
+		clientFactory:     newKubernetesRuntimeClientFactory(log),
 		healthRetryDelay:  agentctlHealthRetryDelay,
 		launchTimingClock: time.Now,
 		sessions:          make(map[string]*kubernetesSession),
@@ -444,11 +444,7 @@ func applyKubernetesDurableJournalPath(createRequest *agentctl.CreateInstanceReq
 	if createRequest == nil || req == nil {
 		return
 	}
-	mode := getMetadataString(req.Metadata, MetadataKeyKubernetesRuntimeWorkspaceMode)
-	if mode == "" {
-		mode = getMetadataString(req.Metadata, MetadataKeyKubernetesWorkspaceMode)
-	}
-	if mode != string(kubeexecutor.WorkspaceModeManagedPVC) && mode != string(kubeexecutor.WorkspaceModeExistingClaim) {
+	if !kubernetesWorkspaceModeSurvivesPod(kubernetesRequestWorkspaceMode(req)) {
 		createRequest.DurableJournalPath = ""
 		return
 	}
