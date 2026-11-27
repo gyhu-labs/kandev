@@ -4,9 +4,11 @@ import (
 	"context"
 	"time"
 
+	"github.com/kandev/kandev/internal/common/logger"
 	"github.com/kandev/kandev/internal/common/turnchanges"
 	"github.com/kandev/kandev/internal/task/models"
 	v1 "github.com/kandev/kandev/pkg/api/v1"
+	"go.uber.org/zap"
 )
 
 type TurnChangeCheckout struct {
@@ -59,13 +61,13 @@ type TurnChangeSummaryProcessor interface {
 	ProcessTurnChanges(context.Context, TurnChangeTerminal, TurnChangeCheckpointClient) error
 }
 
-func turnChangeCheckoutsFromWorkspaceRepositories(repositories []WorkspaceRepositorySpec, executorType string) []TurnChangeCheckout {
+func turnChangeCheckoutsFromWorkspaceRepositories(repositories []WorkspaceRepositorySpec, executorType string, log *logger.Logger) []TurnChangeCheckout {
 	if len(repositories) == 0 {
 		return nil
 	}
 	checkouts := make([]TurnChangeCheckout, 0, len(repositories))
 	for index, repository := range repositories {
-		subpath, subpathKnown := turnChangeCheckoutSubpath(repository, executorType, index)
+		subpath, subpathKnown := turnChangeCheckoutSubpath(repository, executorType, index, log)
 		checkouts = append(checkouts, TurnChangeCheckout{
 			ID: repository.TaskEnvironmentRepoID, EnvironmentRepoID: repository.TaskEnvironmentRepoID,
 			TaskRepositoryID: repository.TaskRepositoryID, RepositoryID: repository.RepositoryID,
@@ -82,7 +84,7 @@ func turnChangeCheckoutsFromWorkspaceRepositories(repositories []WorkspaceReposi
 // root that is not a repository, so the recorded repository name matches no
 // scope there. The key comes from launchRepositoryProjectionKey, as for
 // comparison targets. Other executor types keep the recorded subpath.
-func turnChangeCheckoutSubpath(repository WorkspaceRepositorySpec, executorType string, index int) (string, bool) {
+func turnChangeCheckoutSubpath(repository WorkspaceRepositorySpec, executorType string, index int, log *logger.Logger) (string, bool) {
 	if executorType != string(models.ExecutorTypePluginRemote) {
 		return repository.RepositorySubpath, repository.RepositorySubpathKnown
 	}
@@ -91,6 +93,11 @@ func turnChangeCheckoutSubpath(repository WorkspaceRepositorySpec, executorType 
 		BranchSlug: repository.BranchSlug,
 	}, index)
 	if err != nil || key == "" {
+		if log != nil {
+			log.Debug("plugin turn-change checkout keeps its recorded subpath",
+				zap.String("executor_type", executorType), zap.String("repository", repository.RepoName),
+				zap.Int("repository_index", index), zap.Error(err))
+		}
 		return repository.RepositorySubpath, repository.RepositorySubpathKnown
 	}
 	return key, true

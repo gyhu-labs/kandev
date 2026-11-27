@@ -5,9 +5,13 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/kandev/kandev/internal/agent/executor"
 	"github.com/kandev/kandev/internal/agentruntime"
+	"github.com/kandev/kandev/internal/common/logger"
 	"github.com/kandev/kandev/internal/task/models"
 )
 
@@ -43,7 +47,7 @@ func TestTurnChangeCheckoutsUsePluginBranchScopedDirectories(t *testing.T) {
 		turnChangeWorkspaceRepository("acme-gadget", "main", "feature/next"),
 	}
 
-	checkouts := turnChangeCheckoutsFromWorkspaceRepositories(repositories, string(models.ExecutorTypePluginRemote))
+	checkouts := turnChangeCheckoutsFromWorkspaceRepositories(repositories, string(models.ExecutorTypePluginRemote), nil)
 
 	// The directories agentctl materializes for the same plugin launch.
 	projection, err := remoteWorkspaceProjectionFromLaunch(&LaunchRequest{
@@ -88,21 +92,30 @@ func TestTurnChangeCheckoutsKeepRecordedSubpathOutsidePluginExecutors(t *testing
 		string(models.ExecutorTypeMockRemote),
 	} {
 		t.Run("executor="+executorType, func(t *testing.T) {
-			require.Equal(t, want[:1], turnChangeCheckoutsFromWorkspaceRepositories(repositories[:1], executorType), "single repository")
-			require.Equal(t, want, turnChangeCheckoutsFromWorkspaceRepositories(repositories, executorType), "multiple repositories")
+			require.Equal(t, want[:1], turnChangeCheckoutsFromWorkspaceRepositories(repositories[:1], executorType, nil), "single repository")
+			require.Equal(t, want, turnChangeCheckoutsFromWorkspaceRepositories(repositories, executorType, nil), "multiple repositories")
 		})
 	}
 }
 
 // A repository with no branch has no safe branch-scoped directory. The checkout
-// keeps its recorded subpath, so capture reports it unavailable exactly as before.
+// keeps its recorded subpath, so capture reports it unavailable exactly as
+// before, and a debug line names the reason.
 func TestTurnChangeCheckoutsKeepRecordedSubpathWithoutPluginDirectory(t *testing.T) {
+	core, logs := observer.New(zapcore.DebugLevel)
+	log, err := logger.NewFromZap(zap.New(core))
+	require.NoError(t, err)
+
 	checkouts := turnChangeCheckoutsFromWorkspaceRepositories(
 		[]WorkspaceRepositorySpec{turnChangeWorkspaceRepository("acme-widget", "", "")},
-		string(models.ExecutorTypePluginRemote),
+		string(models.ExecutorTypePluginRemote), log,
 	)
 	require.Equal(t, []TurnChangeCheckout{legacyTurnChangeCheckout("acme-widget")}, checkouts)
-	require.Nil(t, turnChangeCheckoutsFromWorkspaceRepositories(nil, string(models.ExecutorTypePluginRemote)))
+	entries := logs.FilterMessage("plugin turn-change checkout keeps its recorded subpath").All()
+	require.Len(t, entries, 1)
+	require.Equal(t, "acme-widget", entries[0].ContextMap()["repository"])
+	require.Contains(t, entries[0].ContextMap()["error"], "no safe branch-scoped workspace directory")
+	require.Nil(t, turnChangeCheckoutsFromWorkspaceRepositories(nil, string(models.ExecutorTypePluginRemote), log))
 }
 
 // Call site manager_turn_changes.go: the checkout manifest refreshed at prompt
