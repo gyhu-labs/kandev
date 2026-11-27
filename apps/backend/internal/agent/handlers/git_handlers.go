@@ -1013,7 +1013,7 @@ func (h *GitHandlers) computeCumulativeDiff(ctx context.Context, req *Cumulative
 		targetBranch = h.sessionReader.GetSessionBaseBranch(ctx, req.SessionID)
 	}
 	if baseCommit == "" {
-		status, statusErr := agentClient.GetGitStatusWithDetails(ctx)
+		status, statusErr := agentClient.GetPrimaryGitStatusWithDetails(ctx)
 		if statusErr == nil && status != nil && status.BaseCommit != "" {
 			baseCommit = status.BaseCommit
 			h.logger.Debug("using git status base commit as fallback for cumulative diff",

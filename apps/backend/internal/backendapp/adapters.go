@@ -1328,7 +1328,7 @@ func (a *lifecycleAdapter) GetGitStatusWithDetails(ctx context.Context, sessionI
 	if agentClient == nil {
 		return nil, nil
 	}
-	return agentClient.GetGitStatusWithDetails(ctx)
+	return agentClient.GetPrimaryGitStatusWithDetails(ctx)
 }
 
 // WaitForAgentctlReady waits for the agentctl HTTP server to be ready for a session.

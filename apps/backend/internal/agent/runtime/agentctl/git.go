@@ -15,6 +15,9 @@ const GitPushPreflightHistoryUpdateRequired = "history_update_required"
 const (
 	gitPushPreflightTimeout = 2 * time.Minute
 	gitStatusDetailsReady   = "ready"
+	// gitStatusRepositoryUnavailable is agentctl's error code for a status
+	// read whose directory is not a Git repository.
+	gitStatusRepositoryUnavailable = "repository_unavailable"
 )
 
 // GitOperationResult represents the result of a git operation.
@@ -751,8 +754,33 @@ func (c *Client) GetGitStatusFresh(ctx context.Context) (*GitStatusResult, error
 // GetGitStatusWithDetails returns a fresh snapshot after file diffs and
 // secondary Git statistics settle under the caller's deadline.
 func (c *Client) GetGitStatusWithDetails(ctx context.Context) (*GitStatusResult, error) {
+	return c.getGitStatusWithDetails(ctx, "")
+}
+
+// GetPrimaryGitStatusWithDetails is GetGitStatusWithDetails for callers that
+// need the session's one repository, such as base-commit capture. When the
+// workspace root is not a repository and agentctl registers exactly one
+// repository scope, it returns that repository's status. Plugin executors
+// clone the repository into a branch-scoped directory under such a root.
+func (c *Client) GetPrimaryGitStatusWithDetails(ctx context.Context) (*GitStatusResult, error) {
+	result, err := c.getGitStatusWithDetails(ctx, "")
+	if result == nil || result.ErrorCode != gitStatusRepositoryUnavailable {
+		return result, err
+	}
+	scopes, scopeErr := c.TurnCheckpointRepositoryScopes(ctx)
+	if scopeErr != nil || len(scopes) != 1 || scopes[0] == "" {
+		return result, err
+	}
+	return c.getGitStatusWithDetails(ctx, scopes[0])
+}
+
+func (c *Client) getGitStatusWithDetails(ctx context.Context, repo string) (*GitStatusResult, error) {
+	path := "/api/v1/git/status?fresh=true&details=wait"
+	if repo != "" {
+		path += "&repo=" + url.QueryEscape(repo)
+	}
 	var result GitStatusResult
-	status, err := c.fetchJSONResult(ctx, "/api/v1/git/status?fresh=true&details=wait", &result)
+	status, err := c.fetchJSONResult(ctx, path, &result)
 	if err != nil {
 		return nil, err
 	}
