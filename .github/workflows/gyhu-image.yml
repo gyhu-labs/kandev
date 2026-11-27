@@ -53,6 +53,10 @@ jobs:
             ./internal/agent/runtime/lifecycle/... \
             ./internal/kubernetes/... \
             ./internal/task/changes/...
+      - name: Test the lifecycle adapter's Git status gate
+        run: |
+          go test -trimpath -race -count=1 \
+            -run 'TestLifecycleAdapterGitStatusWithDetails' ./internal/backendapp/
       - name: Vet touched packages
         run: |
           go vet ./cmd/agentctl/... ./internal/agent/handlers/... ./internal/agent/kubernetes/... \
