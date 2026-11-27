@@ -4,10 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"slices"
+	"strconv"
 	"sync"
 	"testing"
 
+	client "github.com/kandev/kandev/internal/agent/runtime/agentctl"
+	"github.com/kandev/kandev/internal/agent/runtime/lifecycle"
+	"github.com/kandev/kandev/internal/task/models"
 	ws "github.com/kandev/kandev/pkg/websocket"
 )
 
@@ -69,6 +75,25 @@ func (a *repositoryScopeAgentctl) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	}
 }
 
+// scopeHandlerServer is gitHandlerServer with the execution's executor type set.
+func scopeHandlerServer(t *testing.T, agentctl *repositoryScopeAgentctl, executorType string) *GitHandlers {
+	t.Helper()
+	server := httptest.NewServer(agentctl)
+	t.Cleanup(server.Close)
+	u, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution := &lifecycle.AgentExecution{SessionID: "s", TaskID: "task", ExecutorType: executorType}
+	execution.SetAgentCtlClientForTesting(client.NewClient(u.Hostname(), port, newTestLogger()))
+	lookup := &mockExecutionLookup{executions: map[string]*lifecycle.AgentExecution{"s": execution}}
+	return NewGitHandlers(lookup, nil, newTestLogger())
+}
+
 func cumulativeDiffPayload(t *testing.T, h *GitHandlers) map[string]any {
 	t.Helper()
 	msg, err := ws.NewRequest("request-1", ws.ActionSessionCumulativeDiff, CumulativeDiffRequest{SessionID: "s"})
@@ -100,8 +125,7 @@ func cumulativeDiffBase(t *testing.T, payload map[string]any) string {
 // must read the base from the only registered repository.
 func TestWsCumulativeDiff_BaseFallbackUsesSoleRepositoryScope(t *testing.T) {
 	agentctl := &repositoryScopeAgentctl{scopes: []string{"acme-widget-main"}}
-	h, server := gitHandlerServer(t, agentctl.ServeHTTP)
-	t.Cleanup(server.Close)
+	h := scopeHandlerServer(t, agentctl, string(models.ExecutorTypePluginRemote))
 
 	payload := cumulativeDiffPayload(t, h)
 
@@ -113,12 +137,32 @@ func TestWsCumulativeDiff_BaseFallbackUsesSoleRepositoryScope(t *testing.T) {
 	}
 }
 
+// A non-plugin session with the same bare-root layout (for example a k8s
+// session that started repo-less and had one repository attached later)
+// keeps the root-only read: no scope lookup, no diff, as before.
+func TestWsCumulativeDiff_BaseFallbackKeepsRootReadOutsidePluginExecutors(t *testing.T) {
+	for _, executorType := range []string{"", string(models.ExecutorTypeKubernetes), string(models.ExecutorTypeLocal)} {
+		t.Run("executor="+executorType, func(t *testing.T) {
+			agentctl := &repositoryScopeAgentctl{scopes: []string{"acme-widget-main"}}
+			h := scopeHandlerServer(t, agentctl, executorType)
+
+			payload := cumulativeDiffPayload(t, h)
+
+			if payload["cumulative_diff"] != nil {
+				t.Fatalf("cumulative_diff = %#v, want nil as before", payload["cumulative_diff"])
+			}
+			if got, want := agentctl.snapshot(), []string{"/api/v1/git/status?fresh=true&details=wait"}; !slices.Equal(got, want) {
+				t.Fatalf("requests = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
 // Class S/M layout: the root is the repository, so the root status answers
 // and no scope lookup happens.
 func TestWsCumulativeDiff_BaseFallbackKeepsRootRepository(t *testing.T) {
 	agentctl := &repositoryScopeAgentctl{rootIsRepository: true, scopes: []string{""}}
-	h, server := gitHandlerServer(t, agentctl.ServeHTTP)
-	t.Cleanup(server.Close)
+	h := scopeHandlerServer(t, agentctl, string(models.ExecutorTypeKubernetes))
 
 	payload := cumulativeDiffPayload(t, h)
 
@@ -134,8 +178,7 @@ func TestWsCumulativeDiff_BaseFallbackKeepsRootRepository(t *testing.T) {
 // pick, so the response stays empty as before.
 func TestWsCumulativeDiff_BaseFallbackSkipsAmbiguousRepositoryScopes(t *testing.T) {
 	agentctl := &repositoryScopeAgentctl{scopes: []string{"acme-gadget-main", "acme-widget-main"}}
-	h, server := gitHandlerServer(t, agentctl.ServeHTTP)
-	t.Cleanup(server.Close)
+	h := scopeHandlerServer(t, agentctl, string(models.ExecutorTypePluginRemote))
 
 	payload := cumulativeDiffPayload(t, h)
 
