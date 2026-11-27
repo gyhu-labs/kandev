@@ -58,7 +58,7 @@ type TurnChangeSummaryProcessor interface {
 	ProcessTurnChanges(context.Context, TurnChangeTerminal, TurnChangeCheckpointClient) error
 }
 
-func turnChangeCheckoutsFromWorkspaceRepositories(repositories []WorkspaceRepositorySpec) []TurnChangeCheckout {
+func turnChangeCheckoutsFromWorkspaceRepositories(repositories []WorkspaceRepositorySpec, _ string) []TurnChangeCheckout {
 	if len(repositories) == 0 {
 		return nil
 	}
