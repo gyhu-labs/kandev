@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 const GitPushPreflightHistoryUpdateRequired = "history_update_required"
@@ -757,11 +759,13 @@ func (c *Client) GetGitStatusWithDetails(ctx context.Context) (*GitStatusResult,
 	return c.getGitStatusWithDetails(ctx, "")
 }
 
-// GetPrimaryGitStatusWithDetails is GetGitStatusWithDetails for callers that
-// need the session's one repository, such as base-commit capture. When the
-// workspace root is not a repository and agentctl registers exactly one
-// repository scope, it returns that repository's status. Plugin executors
-// clone the repository into a branch-scoped directory under such a root.
+// GetPrimaryGitStatusWithDetails is GetGitStatusWithDetails for plugin
+// executor sessions, which clone their repository into a branch-scoped
+// directory under a workspace root that is not a repository. When the root
+// reports repository_unavailable and agentctl registers exactly one repository
+// scope, it returns that repository's status. It decides by layout only, so
+// callers must gate it on the executor type
+// (lifecycle.ExecutionGitStatusWithDetails).
 func (c *Client) GetPrimaryGitStatusWithDetails(ctx context.Context) (*GitStatusResult, error) {
 	result, err := c.getGitStatusWithDetails(ctx, "")
 	if result == nil || result.ErrorCode != gitStatusRepositoryUnavailable {
@@ -769,6 +773,10 @@ func (c *Client) GetPrimaryGitStatusWithDetails(ctx context.Context) (*GitStatus
 	}
 	scopes, scopeErr := c.TurnCheckpointRepositoryScopes(ctx)
 	if scopeErr != nil || len(scopes) != 1 || scopes[0] == "" {
+		if c.logger != nil {
+			c.logger.Debug("sole repository git status fallback not taken",
+				zap.Int("repository_scopes", len(scopes)), zap.Error(scopeErr))
+		}
 		return result, err
 	}
 	return c.getGitStatusWithDetails(ctx, scopes[0])
