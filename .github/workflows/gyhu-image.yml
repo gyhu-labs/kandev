@@ -20,7 +20,7 @@ concurrency:
 
 env:
   # Upstream release the fork branch is based on; lint reports new issues only.
-  BASE_REF: v0.103.1
+  BASE_REF: v0.104.0
 
 jobs:
   verify:

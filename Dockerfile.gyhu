@@ -16,7 +16,7 @@
 # The build context must contain the Vite bundle in
 # apps/backend/internal/webapp/embedded/generated (the workflow builds it).
 
-ARG UPSTREAM_IMAGE=ghcr.io/kdlbs/kandev:0.103.1@sha256:7e11b8e15030e18d6ec8327e8015ef8bd241d3c41d14205a0b031a46faa2e2c3
+ARG UPSTREAM_IMAGE=ghcr.io/kdlbs/kandev:0.104.0@sha256:825b098cd8efc3a1672d05c8da47738ba456c8907c7ae2b5b0b043a5d9edc2bc
 ARG GO_IMAGE=golang:1.26.8-bookworm@sha256:dc9ad6c05acc7a88e5b71bde60a5fe3bd4b9f0db209011711b464107438a8107
 
 FROM ${GO_IMAGE} AS build
