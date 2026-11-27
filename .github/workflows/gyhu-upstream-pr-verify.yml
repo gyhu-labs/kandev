@@ -1,0 +1,80 @@
+# gyhu-labs fork only, CI branch only: verify the upstream PR branch
+# feat/k8s-exec-transport-upstream before it is proposed to kdlbs/kandev.
+# Upstream's own workflows stay disabled in the fork; this file never goes upstream.
+name: gyhu upstream PR verify
+
+on:
+  push:
+    branches: ["feat/k8s-exec-transport-upstream-ci"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # upstream/main commit the PR branch is based on; lint reports new issues only.
+  BASE_SHA: 5fbc6dbeeb5050636adeae0957733ca7fe980d08
+
+jobs:
+  verify:
+    name: Verify (race tests, vet, gofmt, golangci-lint, docs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: apps/backend
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@5064d95ba18d4a9dda7c4cc67adeb03aea1a2a14 # v7.0.0
+        with:
+          go-version-file: apps/backend/go.mod
+          cache-dependency-path: |
+            apps/backend/go.sum
+            pluginsdk/go.sum
+      - name: Test touched packages (race)
+        run: |
+          # The skipped test fails on this runner at the unchanged base too (next step).
+          go test -trimpath -race -count=1 \
+            -skip 'TestWorkspaceRecoveryProjectsRelocationErrorFromEveryEntryPoint' \
+            ./cmd/agentctl/... \
+            ./internal/agentctl/tcpstdio/... \
+            ./internal/agent/kubernetes/... \
+            ./internal/agent/runtime/lifecycle/... \
+            ./internal/kubernetes/... \
+            ./internal/task/service/...
+      - name: Skipped test at the unchanged upstream base (expected to fail here too)
+        continue-on-error: true
+        run: |
+          git worktree add -q --detach /tmp/base "${BASE_SHA}"
+          cd /tmp/base/apps/backend
+          go test -trimpath -count=1 -run 'TestWorkspaceRecoveryProjectsRelocationErrorFromEveryEntryPoint' \
+            ./internal/task/service/
+      - name: Vet touched packages
+        run: |
+          go vet ./cmd/agentctl/... ./internal/agentctl/tcpstdio/... ./internal/agent/kubernetes/... \
+            ./internal/agent/runtime/lifecycle/... ./internal/kubernetes/... ./internal/task/service/...
+      - name: Check gofmt
+        run: |
+          unformatted="$(gofmt -l cmd/agentctl internal/agentctl/tcpstdio internal/agent/kubernetes \
+            internal/agent/runtime/lifecycle internal/kubernetes internal/task/service)"
+          if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
+      - name: golangci-lint (new issues since the base commit)
+        env:
+          GOMAXPROCS: "2"
+          GOMEMLIMIT: 3GiB
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.9.0
+          "$(go env GOPATH)/bin/golangci-lint" run \
+            ./cmd/agentctl/... ./internal/agentctl/tcpstdio/... ./internal/agent/kubernetes/... \
+            ./internal/agent/runtime/lifecycle/... ./internal/kubernetes/... ./internal/task/service/... \
+            --new-from-rev="${BASE_SHA}" --timeout=20m --concurrency=2
+      - name: Spec, decision and public docs checks
+        working-directory: .
+        run: |
+          python3 scripts/lint-spec-files.py --all
+          python3 scripts/list-docs.py validate
+          python3 scripts/lint-architecture.py --all
+          node scripts/validate-public-docs.mjs
