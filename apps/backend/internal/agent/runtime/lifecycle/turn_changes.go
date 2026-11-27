@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/kandev/kandev/internal/common/turnchanges"
+	"github.com/kandev/kandev/internal/task/models"
 	v1 "github.com/kandev/kandev/pkg/api/v1"
 )
 
@@ -58,20 +59,41 @@ type TurnChangeSummaryProcessor interface {
 	ProcessTurnChanges(context.Context, TurnChangeTerminal, TurnChangeCheckpointClient) error
 }
 
-func turnChangeCheckoutsFromWorkspaceRepositories(repositories []WorkspaceRepositorySpec, _ string) []TurnChangeCheckout {
+func turnChangeCheckoutsFromWorkspaceRepositories(repositories []WorkspaceRepositorySpec, executorType string) []TurnChangeCheckout {
 	if len(repositories) == 0 {
 		return nil
 	}
 	checkouts := make([]TurnChangeCheckout, 0, len(repositories))
-	for _, repository := range repositories {
+	for index, repository := range repositories {
+		subpath, subpathKnown := turnChangeCheckoutSubpath(repository, executorType, index)
 		checkouts = append(checkouts, TurnChangeCheckout{
 			ID: repository.TaskEnvironmentRepoID, EnvironmentRepoID: repository.TaskEnvironmentRepoID,
 			TaskRepositoryID: repository.TaskRepositoryID, RepositoryID: repository.RepositoryID,
 			WorktreeID: repository.WorktreeID, DisplayName: repository.RepoName,
-			RepositorySubpath: repository.RepositorySubpath, RepositorySubpathKnown: repository.RepositorySubpathKnown,
+			RepositorySubpath: subpath, RepositorySubpathKnown: subpathKnown,
 		})
 	}
 	return checkouts
+}
+
+// turnChangeCheckoutSubpath returns the repository scope agentctl registers
+// for a workspace repository. Plugin executors materialize every repository,
+// the primary one included, in a branch-scoped directory under a workspace
+// root that is not a repository, so the recorded repository name matches no
+// scope there. The key comes from launchRepositoryProjectionKey, as for
+// comparison targets. Other executor types keep the recorded subpath.
+func turnChangeCheckoutSubpath(repository WorkspaceRepositorySpec, executorType string, index int) (string, bool) {
+	if executorType != string(models.ExecutorTypePluginRemote) {
+		return repository.RepositorySubpath, repository.RepositorySubpathKnown
+	}
+	key, err := launchRepositoryProjectionKey(&LaunchRequest{ExecutorType: executorType}, RepoLaunchSpec{
+		RepoName: repository.RepoName, BaseBranch: repository.BaseBranch, CheckoutBranch: repository.CheckoutBranch,
+		BranchSlug: repository.BranchSlug,
+	}, index)
+	if err != nil || key == "" {
+		return repository.RepositorySubpath, repository.RepositorySubpathKnown
+	}
+	return key, true
 }
 
 // TurnChangeCaptureOperation reports whether the exact execution generation
