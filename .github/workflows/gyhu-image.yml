@@ -57,13 +57,15 @@ jobs:
         run: |
           go test -trimpath -race -count=1 \
             -run 'TestLifecycleAdapterGitStatusWithDetails' ./internal/backendapp/
-      # Upstream runs this package in its kandev-ci container; on the stock
-      # runner its worktree relocation/inventory tests fail (they pass on herm
-      # and are untouched here), so run only the base commit capture tests.
-      - name: Test the base commit capture
+      # The runner's system gitconfig carries git-lfs filter.lfs.* entries,
+      # which the worktree relocation proof rejects as checkout filters
+      # (internal/worktree managed_clone_relocation.go rejectUnsupportedCheckoutFeatures);
+      # ignore the system config so the whole package runs as on a clean host.
+      - name: Test the orchestrator executor package
+        env:
+          GIT_CONFIG_NOSYSTEM: "1"
         run: |
-          go test -trimpath -race -count=1 \
-            -run 'TestCaptureBaseCommit|TestExecutorBaseCapture' ./internal/orchestrator/executor/
+          go test -trimpath -race -count=1 ./internal/orchestrator/executor/...
       - name: Vet touched packages
         run: |
           go vet ./cmd/agentctl/... ./internal/agent/handlers/... ./internal/agent/kubernetes/... \
