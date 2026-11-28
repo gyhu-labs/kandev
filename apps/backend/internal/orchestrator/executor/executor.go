@@ -1197,6 +1197,7 @@ type Executor struct {
 	capabilities                  ExecutorTypeCapabilities
 	gitlabCredentials             GitLabCredentialResolver
 	logger                        *logger.Logger
+	baseCommitRetryDelay          time.Duration // first base-capture backoff; 0 = baseCommitCaptureRetryDelay (tests shorten it)
 	canvasesEnabled               bool
 	workspaceCollaborationEnabled bool
 

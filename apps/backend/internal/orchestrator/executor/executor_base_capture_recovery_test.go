@@ -61,11 +61,12 @@ func TestExecutorBaseCaptureRecoveryRejectsUnavailableDetails(t *testing.T) {
 		},
 	}
 	executor := newTestExecutor(t, manager, repo)
+	executor.baseCommitRetryDelay = fastBaseCommitRetryDelay
 
 	executor.captureBaseCommit(context.Background(), "session-123")
 
-	if manager.detailsCalls != 1 {
-		t.Fatalf("enriched status calls = %d, want one", manager.detailsCalls)
+	if manager.detailsCalls != baseCommitCaptureAttempts {
+		t.Fatalf("enriched status calls = %d, want the bounded %d attempts", manager.detailsCalls, baseCommitCaptureAttempts)
 	}
 	if got := repo.sessions["session-123"].BaseCommitSHA; got != "" {
 		t.Fatalf("saved base commit = %q, want no baseline from unavailable enrichment", got)

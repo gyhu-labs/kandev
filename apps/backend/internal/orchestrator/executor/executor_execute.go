@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/kandev/kandev/internal/agent/planinjection"
+	"github.com/kandev/kandev/internal/agent/runtime/agentctl"
 	"github.com/kandev/kandev/internal/agent/runtime/lifecycle"
 	"github.com/kandev/kandev/internal/agent/runtime/routingerr"
 	"github.com/kandev/kandev/internal/common/constants"
@@ -3706,6 +3707,38 @@ func (e *Executor) bindPromptTurnID(ctx context.Context, sessionID, executionID 
 	}
 }
 
+// Base commit capture retries only agentctl's details_unavailable outcome: the
+// basic status is complete but its detail enrichment has not settled, which a
+// fresh plugin clone reports right after launch. Delays 0.5 s, 1 s, 2 s.
+const (
+	baseCommitCaptureAttempts       = 4
+	baseCommitCaptureRetryDelay     = 500 * time.Millisecond
+	gitStatusDetailsUnavailableCode = "details_unavailable"
+)
+
+func (e *Executor) readBaseCommitGitStatus(ctx context.Context, sessionID string) (*client.GitStatusResult, error) {
+	delay := baseCommitCaptureRetryDelay
+	if e.baseCommitRetryDelay > 0 {
+		delay = e.baseCommitRetryDelay
+	}
+	for attempt := 1; ; attempt++ {
+		status, err := getGitStatusWithDetails(ctx, e.agentManager, sessionID)
+		retryable := status != nil && !status.Success && status.ErrorCode == gitStatusDetailsUnavailableCode
+		if !retryable || attempt == baseCommitCaptureAttempts {
+			return status, err
+		}
+		// A context cancelled during the read ends here too: Done is ready.
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return status, err
+		case <-timer.C:
+		}
+		delay *= 2
+	}
+}
+
 // captureBaseCommit retrieves the merge-base commit from agentctl and stores it
 // as the base commit for the session. This allows calculating cumulative diffs
 // that show all changes on the branch relative to the target branch (e.g., main).
@@ -3720,7 +3753,7 @@ func (e *Executor) captureBaseCommit(ctx context.Context, sessionID string) {
 		return
 	}
 
-	status, err := getGitStatusWithDetails(ctx, e.agentManager, sessionID)
+	status, err := e.readBaseCommitGitStatus(ctx, sessionID)
 	if err != nil {
 		e.logger.Warn("failed to get git status for base commit capture",
 			zap.String("session_id", sessionID),

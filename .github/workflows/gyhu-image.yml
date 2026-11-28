@@ -57,15 +57,24 @@ jobs:
         run: |
           go test -trimpath -race -count=1 \
             -run 'TestLifecycleAdapterGitStatusWithDetails' ./internal/backendapp/
+      # The runner's system gitconfig carries git-lfs filter.lfs.* entries,
+      # which the worktree relocation proof rejects as checkout filters
+      # (internal/worktree managed_clone_relocation.go rejectUnsupportedCheckoutFeatures);
+      # ignore the system config so the whole package runs as on a clean host.
+      - name: Test the orchestrator executor package
+        env:
+          GIT_CONFIG_NOSYSTEM: "1"
+        run: |
+          go test -trimpath -race -count=1 ./internal/orchestrator/executor/...
       - name: Vet touched packages
         run: |
           go vet ./cmd/agentctl/... ./internal/agent/handlers/... ./internal/agent/kubernetes/... \
             ./internal/agent/runtime/agentctl/... ./internal/agent/runtime/lifecycle/... \
-            ./internal/backendapp/... ./internal/kubernetes/... \
+            ./internal/backendapp/... ./internal/kubernetes/... ./internal/orchestrator/executor/... \
             ./internal/task/service/... ./internal/task/changes/...
       - name: Check gofmt
         run: |
-          unformatted="$(gofmt -l cmd/agentctl internal/agent/handlers internal/agent/kubernetes internal/agent/runtime/agentctl internal/agent/runtime/lifecycle internal/backendapp internal/kubernetes internal/task/service internal/task/changes)"
+          unformatted="$(gofmt -l cmd/agentctl internal/agent/handlers internal/agent/kubernetes internal/agent/runtime/agentctl internal/agent/runtime/lifecycle internal/backendapp internal/kubernetes internal/orchestrator/executor internal/task/service internal/task/changes)"
           if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
       - name: golangci-lint (new issues since the base tag)
         env:
@@ -76,7 +85,7 @@ jobs:
           "$(go env GOPATH)/bin/golangci-lint" run \
             ./cmd/agentctl/... ./internal/agent/handlers/... ./internal/agent/kubernetes/... \
             ./internal/agent/runtime/agentctl/... ./internal/agent/runtime/lifecycle/... \
-            ./internal/kubernetes/... ./internal/task/changes/... \
+            ./internal/kubernetes/... ./internal/orchestrator/executor/... ./internal/task/changes/... \
             --new-from-rev="${BASE_REF}" --timeout=15m --concurrency=2
 
   image:
@@ -138,6 +147,12 @@ jobs:
           push: true
           provenance: false
           tags: ghcr.io/gyhu-labs/kandev:${{ steps.version.outputs.image_tag }}
+          # Without these the upstream base image's labels leak through and
+          # name an upstream commit and version.
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.version.outputs.image_tag }}
+            org.opencontainers.image.source=https://github.com/gyhu-labs/kandev
           build-args: |
             KANDEV_VERSION=${{ steps.version.outputs.kandev_version }}
             KANDEV_COMMIT=${{ steps.version.outputs.commit }}
