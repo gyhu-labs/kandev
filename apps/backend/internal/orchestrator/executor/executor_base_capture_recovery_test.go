@@ -61,6 +61,7 @@ func TestExecutorBaseCaptureRecoveryRejectsUnavailableDetails(t *testing.T) {
 		},
 	}
 	executor := newTestExecutor(t, manager, repo)
+	executor.baseCommitRetryDelay = fastBaseCommitRetryDelay
 
 	executor.captureBaseCommit(context.Background(), "session-123")
 

@@ -3718,12 +3718,16 @@ const (
 
 func (e *Executor) readBaseCommitGitStatus(ctx context.Context, sessionID string) (*client.GitStatusResult, error) {
 	delay := baseCommitCaptureRetryDelay
+	if e.baseCommitRetryDelay > 0 {
+		delay = e.baseCommitRetryDelay
+	}
 	for attempt := 1; ; attempt++ {
 		status, err := getGitStatusWithDetails(ctx, e.agentManager, sessionID)
 		retryable := status != nil && !status.Success && status.ErrorCode == gitStatusDetailsUnavailableCode
-		if !retryable || attempt == baseCommitCaptureAttempts || ctx.Err() != nil {
+		if !retryable || attempt == baseCommitCaptureAttempts {
 			return status, err
 		}
+		// A context cancelled during the read ends here too: Done is ready.
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
