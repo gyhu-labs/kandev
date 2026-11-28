@@ -438,6 +438,9 @@ func (m *Manager) prepareRemoteExecution(
 	execution.setRuntimeEnvironment(ri.Env)
 	execution.OfficeAgentProfileID = getMetadataString(metadata, MetadataKeyOfficeAgentProfileID)
 	applyRemoteLegacySessionEvidence(execution, ri)
+	// The turn in flight across the restart finishes on this execution, and its
+	// terminal checkpoint must match the checkouts its start was admitted with.
+	m.populateLaunchTurnChangeCheckouts(ctx, execution)
 	if err := m.reDeriveRecoveredAgentIdentity(ctx, execution); err != nil {
 		return nil, err
 	}
